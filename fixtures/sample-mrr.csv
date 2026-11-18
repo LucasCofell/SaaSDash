@@ -1,0 +1,12 @@
+customer_id,month,mrr,plan
+A,2025-01,100,Starter
+B,2025-01,200,Growth
+D,2025-01,300,Pro
+A,2025-02,100,Starter
+B,2025-02,200,Growth
+C,2025-02,50,Starter
+A,2025-03,150,Growth
+C,2025-03,50,Starter
+A,2025-04,150,Growth
+C,2025-04,30,Starter
+D,2025-04,300,Pro
