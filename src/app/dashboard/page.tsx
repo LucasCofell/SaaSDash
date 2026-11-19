@@ -55,10 +55,10 @@ export default async function DashboardPage() {
         <div className="card">
           <h2 style={{ marginTop: 0 }}>Add your subscription data</h2>
           <p className="muted">
-            Upload a CSV of monthly MRR by customer to see your metrics. Stripe connection is coming next.
+            Connect Stripe or upload a CSV of monthly MRR by customer to see your metrics.
           </p>
           <Link className="btn" href="/upload">
-            Upload CSV
+            Add data
           </Link>
         </div>
       </main>

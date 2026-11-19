@@ -34,9 +34,10 @@ export async function uploadCsv(_prev: UploadState, formData: FormData): Promise
   if (!user) redirect("/login");
 
   const company = await getOrCreateCompany(supabase);
-  const { error } = await supabase.rpc("replace_csv_mrr", {
+  const { error } = await supabase.rpc("replace_mrr", {
     p_company: company.id,
-    p_filename: file.name,
+    p_source: "csv",
+    p_label: file.name,
     p_rows: rows,
   });
   if (error) return { message: `Could not save the upload: ${error.message}`, errors: [] };

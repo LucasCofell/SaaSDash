@@ -5,15 +5,24 @@ import { money, monthLabel } from "@/lib/format";
 import { AppHeader } from "../AppHeader";
 import { UploadForm } from "./UploadForm";
 import { saveCash } from "./actions";
+import { connectStripe, disconnectStripe, resyncStripe } from "./stripe-actions";
+import { getStripeConnection } from "@/lib/stripe/sync";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // Stripe syncs page through invoices
 
 export default async function UploadPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cashSaved?: string; cashError?: string }>;
+  searchParams: Promise<{
+    cashSaved?: string;
+    cashError?: string;
+    stripeSynced?: string;
+    stripeError?: string;
+    stripeDisconnected?: string;
+  }>;
 }) {
-  const { cashSaved, cashError } = await searchParams;
+  const { cashSaved, cashError, stripeSynced, stripeError, stripeDisconnected } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -21,25 +30,82 @@ export default async function UploadPage({
   if (!user) redirect("/login");
 
   const company = await getOrCreateCompany(supabase);
-  const [upload, cash] = await Promise.all([latestUpload(supabase, company.id), loadCash(supabase, company.id)]);
+  const [upload, cash, stripe] = await Promise.all([
+    latestUpload(supabase, company.id),
+    loadCash(supabase, company.id),
+    getStripeConnection(supabase, company.id),
+  ]);
 
   return (
     <main className="wrap">
       <AppHeader email={user.email} />
 
+      {upload && (
+        <p className="small" style={{ marginTop: -8 }}>
+          Current subscription data: <strong>{upload.filename}</strong> ({upload.row_count.toLocaleString()}{" "}
+          customer-months, {new Date(upload.created_at).toLocaleString()}). A new Stripe sync or CSV upload replaces
+          it.
+        </p>
+      )}
+
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>Subscription data (CSV)</h2>
+        <h2 style={{ marginTop: 0 }}>Stripe</h2>
+        {stripe ? (
+          <>
+            <p className="small">
+              Connected with key <code>{stripe.key_hint}</code>
+              {!stripe.livemode && " (test mode)"}.{" "}
+              {stripe.last_synced_at
+                ? `Last synced ${new Date(stripe.last_synced_at).toLocaleString()}: ${stripe.last_sync_summary}`
+                : "Not synced yet."}
+            </p>
+            {stripe.last_error && !stripeSynced && <p className="error small">Last sync failed: {stripe.last_error}</p>}
+            <div className="row">
+              <form action={resyncStripe}>
+                <button className="btn" type="submit">
+                  Sync now
+                </button>
+              </form>
+              <form action={disconnectStripe}>
+                <button className="linkbtn small" type="submit">
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="muted small">
+              SaaSDash rebuilds your monthly MRR history from Stripe invoices (up to 36 months). Use a{" "}
+              <strong>restricted, read-only key</strong>: in Stripe, go to Developers → API keys → Create restricted key,
+              and set <strong>Customers, Invoices, Prices, Products and Subscriptions</strong> to Read. Leave everything
+              else as None. The key is encrypted before it&apos;s stored and can never change anything in your Stripe
+              account.
+            </p>
+            <form action={connectStripe} className="row">
+              <label className="field" style={{ flex: 1, minWidth: 260 }}>
+                Restricted key
+                <input type="password" name="key" required placeholder="rk_live_…" autoComplete="off" />
+              </label>
+              <button className="btn" type="submit">
+                Connect and import
+              </button>
+            </form>
+            <p className="muted small">Importing can take up to a minute for larger accounts.</p>
+          </>
+        )}
+        {stripeSynced && <p className="success small">Imported from Stripe: {stripeSynced}</p>}
+        {stripeError && <p className="error small">{stripeError}</p>}
+        {stripeDisconnected && <p className="small">Stripe disconnected. Your imported data is unchanged.</p>}
+      </div>
+
+      <div className="card">
+        <h2 style={{ marginTop: 0 }}>Or upload a CSV</h2>
         <p className="muted small">
           One row per customer per month, with columns <code>customer_id</code>, <code>month</code> (YYYY-MM) and{" "}
-          <code>mrr</code> (dollars). Annual plans should be entered at 1/12 per month. Uploading replaces your
-          previous CSV data. <a href="/sample-mrr.csv">Download a sample file</a>.
+          <code>mrr</code> (dollars). Annual plans should be entered at 1/12 per month.{" "}
+          <a href="/sample-mrr.csv">Download a sample file</a>.
         </p>
-        {upload && (
-          <p className="small">
-            Current data: <strong>{upload.filename}</strong> ({upload.row_count.toLocaleString()} rows, uploaded{" "}
-            {new Date(upload.created_at).toLocaleDateString()})
-          </p>
-        )}
         <UploadForm />
       </div>
 
