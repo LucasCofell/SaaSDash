@@ -5,6 +5,23 @@ import { getOrCreateCompany, loadCash, loadMrrRows } from "@/lib/data";
 import { computeMetrics, type MonthMetrics } from "@/lib/metrics";
 import { money, moneyShort, monthLabel, num, pct } from "@/lib/format";
 import { AppHeader } from "../AppHeader";
+import {
+  CohortHeatmap,
+  MrrMovementsChart,
+  MrrTrendChart,
+  NetNewBridge,
+  Sparkline,
+  type CohortView,
+  type TrendPoint,
+} from "./charts";
+
+interface Tile {
+  label: string;
+  value: string;
+  sub?: string;
+  delta?: { text: string; good: boolean; show: boolean };
+  spark?: number[];
+}
 
 export const dynamic = "force-dynamic";
 
@@ -67,16 +84,67 @@ export default async function DashboardPage() {
 
   const { months, cohorts } = computeMetrics(rows, cash);
   const latest = months[months.length - 1];
+  const prev = months.length > 1 ? months[months.length - 2] : null;
   const shown = months.slice(-12);
-  const recentCohorts = cohorts.slice(-12);
-  const maxAge = Math.max(...recentCohorts.map((c) => c.revenueRetention.length));
+  const charted = months.slice(-24);
 
-  const tiles = [
-    { label: "MRR", value: moneyShort(latest.mrrCents), sub: `ARR ${moneyShort(latest.arrCents)}` },
-    { label: "Net new MRR", value: moneyShort(latest.netNewMrrCents), sub: monthLabel(latest.month) },
-    { label: "Customers", value: latest.customers.toLocaleString(), sub: `ARPA ${moneyShort(latest.arpaCents)}` },
-    { label: "NRR (T12M)", value: pct(latest.nrr12, 0), sub: `GRR ${pct(latest.grr12, 0)}` },
-    { label: "Logo churn", value: pct(latest.logoChurnRate), sub: "this month" },
+  const trend: TrendPoint[] = charted.map((m) => ({
+    month: m.month,
+    label: monthLabel(m.month),
+    mrr: m.mrrCents,
+    netNew: m.netNewMrrCents,
+  }));
+  const movements = charted.map((m) => ({
+    month: m.month,
+    label: monthLabel(m.month),
+    newMrr: m.newMrrCents,
+    expansion: m.expansionMrrCents,
+    reactivation: m.reactivationMrrCents,
+    contraction: m.contractionMrrCents,
+    churn: m.churnedMrrCents,
+    netNew: m.netNewMrrCents,
+    beginning: m.mrrCents - m.netNewMrrCents,
+    ending: m.mrrCents,
+  }));
+  const cohortViews: CohortView[] = cohorts.slice(-12).map((c) => ({
+    cohort: c.cohort,
+    label: monthLabel(c.cohort),
+    customers: c.customers,
+    startingMrr: c.startingMrrCents,
+    revenue: c.revenueRetention,
+    logos: c.logoRetention,
+  }));
+  const spark = (f: (m: MonthMetrics) => number | null) =>
+    shown.map(f).filter((v): v is number => v !== null);
+
+  const mrrDelta = prev && prev.mrrCents > 0 ? latest.mrrCents / prev.mrrCents - 1 : null;
+  const tiles: Tile[] = [
+    {
+      label: "Net new MRR",
+      value: moneyShort(latest.netNewMrrCents),
+      sub: monthLabel(latest.month),
+      spark: spark((m) => m.netNewMrrCents),
+    },
+    {
+      label: "Customers",
+      value: latest.customers.toLocaleString(),
+      delta: prev
+        ? {
+            text: `${latest.customers - prev.customers >= 0 ? "+" : ""}${latest.customers - prev.customers} vs ${monthLabel(prev.month)}`,
+            good: latest.customers >= prev.customers,
+            show: true,
+          }
+        : undefined,
+      sub: `ARPA ${moneyShort(latest.arpaCents)}`,
+      spark: spark((m) => m.customers),
+    },
+    { label: "NRR (trailing 12 mo)", value: pct(latest.nrr12, 0), sub: `GRR ${pct(latest.grr12, 0)}` },
+    {
+      label: "Logo churn",
+      value: pct(latest.logoChurnRate),
+      sub: `Gross MRR churn ${pct(latest.grossMrrChurnRate)}`,
+      spark: spark((m) => m.logoChurnRate),
+    },
     {
       label: "Runway",
       value: latest.runwayMonths === null ? "—" : `${latest.runwayMonths.toFixed(1)} mo`,
@@ -87,29 +155,76 @@ export default async function DashboardPage() {
   return (
     <main className="wrap">
       <AppHeader email={user.email} />
-      <p className="muted small" style={{ marginTop: -8 }}>
-        Through {monthLabel(latest.month)}
-        {cash.length === 0 && (
-          <>
-            {" · "}
-            <Link href="/upload">Add cash and burn</Link> to see runway
-          </>
-        )}
-      </p>
 
-      <div className="tiles">
-        {tiles.map((t) => (
-          <div className="tile" key={t.label}>
-            <div className="label">{t.label}</div>
-            <div className="value">{t.value}</div>
-            <div className="sub">{t.sub}</div>
+      <section className="hero-row">
+        <div className="hero-metric">
+          <div className="label">MRR · {monthLabel(latest.month)}</div>
+          <div className="hero-value">{moneyShort(latest.mrrCents)}</div>
+          <div className="small">
+            {mrrDelta !== null && (
+              <span className={mrrDelta >= 0 ? "delta-good" : "delta-bad"}>
+                {mrrDelta >= 0 ? "▲" : "▼"} {Math.abs(mrrDelta * 100).toFixed(1)}% vs {prev && monthLabel(prev.month)}
+              </span>
+            )}
+            <span className="muted"> · ARR {moneyShort(latest.arrCents)}</span>
           </div>
-        ))}
+          {cash.length === 0 && (
+            <p className="small muted" style={{ marginBottom: 0 }}>
+              <Link href="/upload">Add cash and burn</Link> to see runway and burn multiple.
+            </p>
+          )}
+        </div>
+        <div className="tiles">
+          {tiles.map((t) => (
+            <div className="tile" key={t.label}>
+              <div className="label">{t.label}</div>
+              <div className="value">{t.value}</div>
+              {t.delta?.show && (
+                <div className={`sub ${t.delta.good ? "delta-good" : "delta-bad"}`}>
+                  {t.delta.good ? "▲" : "▼"} {t.delta.text}
+                </div>
+              )}
+              {t.sub && <div className="sub">{t.sub}</div>}
+              {t.spark && t.spark.length > 1 && (
+                <div style={{ marginTop: 6 }}>
+                  <Sparkline values={t.spark} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="chart-grid">
+        <div className="card">
+          <h3 className="chart-title">MRR</h3>
+          <p className="chart-sub">Month-end monthly recurring revenue, last {trend.length} months</p>
+          <MrrTrendChart data={trend} />
+        </div>
+        <div className="card">
+          <h3 className="chart-title">Net new MRR bridge</h3>
+          <p className="chart-sub">What moved MRR in one month</p>
+          <NetNewBridge data={movements} />
+        </div>
       </div>
 
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Monthly metrics</h3>
-        <div className="scroll">
+        <h3 className="chart-title">MRR movements</h3>
+        <p className="chart-sub">Gains above the line, losses below; the dot is net new MRR</p>
+        <MrrMovementsChart data={movements} />
+      </div>
+
+      <div className="card">
+        <h3 className="chart-title">Cohort retention</h3>
+        <p className="chart-sub">Each row is the customers who started paying that month</p>
+        <CohortHeatmap cohorts={cohortViews} />
+      </div>
+
+      <details className="card">
+        <summary>
+          <strong>Monthly metrics table</strong> <span className="muted small">(last 12 months, all metrics)</span>
+        </summary>
+        <div className="scroll" style={{ marginTop: 12 }}>
           <table className="grid">
             <thead>
               <tr>
@@ -133,45 +248,7 @@ export default async function DashboardPage() {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Cohort revenue retention</h3>
-        <p className="muted small">MRR from each starting cohort as a share of its first-month MRR.</p>
-        <div className="scroll">
-          <table className="grid">
-            <thead>
-              <tr>
-                <th>Cohort</th>
-                <th>Customers</th>
-                <th>Starting MRR</th>
-                {Array.from({ length: maxAge }, (_, k) => (
-                  <th key={k}>M{k}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {recentCohorts.map((c) => (
-                <tr key={c.cohort}>
-                  <td>{monthLabel(c.cohort)}</td>
-                  <td>{c.customers}</td>
-                  <td>{money(c.startingMrrCents)}</td>
-                  {Array.from({ length: maxAge }, (_, k) => {
-                    const v = c.revenueRetention[k];
-                    if (v === undefined) return <td key={k} />;
-                    const alpha = Math.max(0.06, Math.min(1, v) * 0.45);
-                    return (
-                      <td key={k} style={{ background: `rgba(47, 91, 211, ${alpha})` }}>
-                        {pct(v, 0)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      </details>
     </main>
   );
 }
